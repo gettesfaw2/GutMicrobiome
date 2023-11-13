@@ -7,15 +7,16 @@ Clinical data(metadata) used in this study cannot be made freely available to pr
 
 # There four are scripts associated with this project
 
-1.	Diarrhea_Alpha_Beta_diversity_microbiome_analysis.R
-   # This script contains the relative abundance analysis, alpha diversity analysis, beta diversity analysis, distance-based redundancy (db-RDA) analysis, and logistic regregration analysis. 
+ # Diarrhea_Alpha_Beta_diversity_microbiome_analysis.R
+    This script contains the relative abundance analysis, alpha diversity analysis, beta diversity analysis, distance-based redundancy (db-RDA) analysis, and logistic regression analysis. 
   
-2.	Phyloseq_CSS_import_16S.R
+	Phyloseq_CSS_import_16S.R
    # This R file is used to import the Phyloseq object that is used for the “beta diversity analysis and distance-based redundancy (db-RDA) analysis”.
   
-3.	Phyloseq_import_16S.R
-   # This R file is used to import the Phyloseq object that is used for the “relative abundance analysis, alpha diversity analysis”. 
+  # Phyloseq_import_16S.R
+   
+   This R file is used to import the Phyloseq object that is used for the “relative abundance analysis, alpha diversity analysis”. 
   
-4.	Diarrhea_Differenatial_abundance_Microbiome_analysis.Rmd
+ # Diarrhea_Differenatial_abundance_Microbiome_analysis.Rmd
 
-  	# This R  markdown file contains the differential microbiome analysis using the DESeq2 and sparse partial least square discriminatory analysis (sPLS-DA).
+  	 This R  markdown file contains the differential microbiome analysis using the DESeq2 and sparse partial least square discriminatory analysis (sPLS-DA).
