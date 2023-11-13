@@ -1100,7 +1100,7 @@ datalog### metadata
 final_model <- glm(case_control_cat ~ caretaker_fct+ modedel_fct+prematur_fct+breastmilk_now+crowding_dich+muac_undereq125+WAM_index+weaned_early+histab+histdiar+histmalr+histvisi_dich+hospitaladmission+animal_any+agemonth+site+season+gender, family = binomial(link = "logit"), data = datalog) ### include clinical important variables 
 
 summary(final_model)
-mod <- exp(coef(final_model))  ## to the adds ratio
+mod <- exp(coef(final_model))  ##  odds ratio
 mod
 exp(confint(final_model))  ## confidence interval 
 
@@ -1115,7 +1115,7 @@ PS_CASE_only
 sample_data(PS_CASE_only)$diarrhoea_AD_ProPD<- revalue(sample_data(PS_CASE_only)$diarrhoea_category,c( "ProPD"="1", "AD"= "0")) ##  
 
 
-## Final Model logist regression ProPD_AD ###
+## Final Model logistic regression ProPD_AD ###
 
 diarrhoea_AD_ProPD ### metadata
 
@@ -1123,6 +1123,6 @@ Final_AD_ProPD <- glm(diarrhoea_AD_ProPD ~stunting+histors+histab+histdiar+muac_
 
 summary(Final_AD_ProPD) 
 
-exp(coef(Final_AD_ProPD))  ## to the adds ratio
+exp(coef(Final_AD_ProPD))  ##  odds ratio
 exp(confint(Final_AD_ProPD)) ## confidence interval 
 
