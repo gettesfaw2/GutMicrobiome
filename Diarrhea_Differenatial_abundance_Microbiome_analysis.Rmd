@@ -1,0 +1,1983 @@
+---
+title: "Cryptopoc_yan"
+author: "Getnet Tesfaw"
+date: "11/19/2021"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, fig.width=10, fig.height = 8)
+
+# check and install packages
+p.cran <- c("DT","patchwork", "devtools", "BiocManager", "ggprism", "tidyverse", "vegan",  "rstatix", "ggpubr", "RColorBrewer", "UpSetR", "ggalluvial", "nlme", "compositions")
+p.bioconductor <- c("phyloseq", "ANCOMBC","ComplexHeatmap")
+p.github <- c("ampvis2")
+p.github.addr <- c("MadsAlbertsen/ampvis2")
+
+load_package <- function(p) {
+  if (!requireNamespace(p, quietly = TRUE)) {
+    if (p %in% p.github) {
+      index <- match(p, p.github)
+      devtools::install_github(p.github.addr[index])
+    } else if (p %in% p.bioconductor) {
+      BiocManager::install(p)
+    } else {
+      install.packages(p, repos = "http://cran.us.r-project.org/")
+    }
+  }
+  library(p, character.only = TRUE, quietly = TRUE)
+}
+
+invisible(lapply(c(p.cran, p.bioconductor, p.github), load_package))
+library(metagMisc)
+library(DESeq2)
+library(pheatmap)
+
+p1 <- c("tidyverse", "vegan", "BiocManager")
+p2 <- c("phyloseq", "ANCOMBC", "DESeq2", "ComplexHeatmap")
+load_package <- function(p) {
+  if (!requireNamespace(p, quietly = TRUE)) {
+    ifelse(p %in% p1, 
+           install.packages(p, repos = "http://cran.us.r-project.org/"), 
+           BiocManager::install(p))
+  }
+  library(p, character.only = TRUE, quietly = TRUE)
+}
+invisible(lapply(c(p1,p2), load_package))
+library(microbiome)
+```
+
+```{r color, include=FALSE}
+
+library(rabuplot) ### relative abundance plot 
+library(tidyverse)
+library(ggpubr)
+library(ggsci)
+library(dplyr)
+library(rstatix)
+library(readxl)
+library(ampvis2)
+library(plyr)
+library(cowplot)
+library(RVAideMemoire)
+library(data.table)
+library(phyloseq)
+library(DESeq2)
+library(EnhancedVolcano)
+library(ggrepel)
+library(metagMisc)
+library(RColorBrewer)
+library(ComplexHeatmap)
+library(metagenomeSeq)
+library(microbiomeMarker)
+library(microbiome)
+library(dplyr)
+library(GUniFrac)
+library(vegan)
+library(ggplot2)
+library(viridis)
+library(RColorBrewer)
+suppressMessages(library(randomcoloR, quietly = T, warn.conflicts = F))
+suppressMessages(library(DESeq2, quietly = T, warn.conflicts = F))
+suppressMessages(library(plyr, quietly = T, warn.conflicts = F))
+suppressMessages(library(gplots, quietly = T, warn.conflicts = F))
+
+#p3 <- p_bar.f.phylum + p_bar.f.species +
+  #plot_annotation(tag_levels = 'A')  +
+  #plot_layout(ncol = 1)
+#p3
+#ggsave("results/paper/figure_4.pdf", p3, device = cairo_pdf, width = 16, height = 10)
+
+#Coulour pallettes
+
+col_fil <- pal_jco("default")(10)
+
+col_scale <- scale_color_jco()
+
+```
+
+
+```{r 2phyloseq, include=FALSE}
+
+otu <- read.delim('feature_table_sintax.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE, row.names = 1, header = TRUE)
+taxonomy <- read.delim('taxonomy.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE, row.names = 1, header = TRUE)
+
+# clean the taxonomy, Greengenes format
+# rscript is a bit messy, "; ", ";" So discard all whitespaces there
+taxonomy$Taxon <- stringr::str_remove_all(taxonomy$Taxon, " ")
+
+# clean the taxonomy, Greengenes format
+tax <- taxonomy %>%
+  select(Taxon) %>% 
+  separate(Taxon, c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"), ";")
+
+tax.clean <- data.frame(row.names = row.names(tax),
+                        Kingdom = str_replace(tax[,1], "k__",""),
+                        Phylum = str_replace(tax[,2], "p__",""),
+                        Class = str_replace(tax[,3], "c__",""),
+                        Order = str_replace(tax[,4], "o__",""),
+                        Family = str_replace(tax[,5], "f__",""),
+                        Genus = str_replace(tax[,6], "g__",""),
+                        Species = str_replace(tax[,7], "s__",""),
+                        stringsAsFactors = FALSE)
+
+tax.clean[is.na(tax.clean)] <- ""
+tax.clean[tax.clean=="__"] <- ""
+
+for (i in 1:nrow(tax.clean)){
+  if (tax.clean[i,7] != ""){
+    tax.clean$Species[i] <- paste(tax.clean$Genus[i], tax.clean$Species[i], sep = " ")
+  } else if (tax.clean[i,2] == ""){
+    kingdom <- paste("Unclassified", tax.clean[i,1], sep = " ")
+    tax.clean[i, 2:7] <- kingdom
+  } else if (tax.clean[i,3] == ""){
+    phylum <- paste("Unclassified", tax.clean[i,2], sep = " ")
+    tax.clean[i, 3:7] <- phylum
+  } else if (tax.clean[i,4] == ""){
+    class <- paste("Unclassified", tax.clean[i,3], sep = " ")
+    tax.clean[i, 4:7] <- class
+  } else if (tax.clean[i,5] == ""){
+    order <- paste("Unclassified", tax.clean[i,4], sep = " ")
+    tax.clean[i, 5:7] <- order
+  } else if (tax.clean[i,6] == ""){
+    family <- paste("Unclassified", tax.clean[i,5], sep = " ")
+    tax.clean[i, 6:7] <- family
+  } else if (tax.clean[i,7] == ""){
+    tax.clean$Species[i] <- paste("Unclassified ",tax.clean$Genus[i], sep = " ")
+  }
+}
+
+metadata <- read.delim('metadata_cryptopoc_final.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE, row.names = 1, header = TRUE)
+
+
+
+OTU = otu_table(as.matrix(otu), taxa_are_rows = TRUE)
+TAX = tax_table(as.matrix(tax.clean))
+SAMPLE <- sample_data(metadata)
+
+# merge the data
+PSB <- phyloseq(OTU, TAX, SAMPLE)
+PSB 
+
+
+## categorizing data 
+
+sample_data(PSB)$diarrhoea_category<- revalue(sample_data(PSB)$diarrhoea,c("AD"="AD", "ProD"="ProPD", "PD"="ProPD","Cont"="Control")) #### reclassifying PD to ProD 
+
+
+PSOBT<- subset_samples(PSB,cc_substudy!="0") ## this are only case control samples follow up samples removed. 
+PSOBT
+
+### subset Case_control  samples only by removing the follow up samples ######## 
+
+PSOB<- subset_samples(PSOBT,control_fct!="NA") ## this are only case control samples follow up samples removed. 
+PSOB
+
+
+sample_data(PSOB)$month<-as.factor(sample_data(PSOB)$month)## to change the numric variable to factor so that it will be easy to convert categorical variable blow
+
+sample_data(PSOB)$season<-revalue(sample_data(PSOB)$month,c("2"="dry_season","3"="dry_season","4"="dry_season","5"="wet_season","6"="wet_season", "7"="wet_season","8"="wet_season", "9"="wet_season","10"="wet_season","11"="dry_season", "12"="dry_season", "13"="dry_season", "14"="dry_season","15"="dry_season","16"="dry_season","17"="wet_season","18"="wet_season","19"="wet_season")) ## classifying the seaseons
+
+
+
+
+
+PSBJ <- prune_samples(sample_sums(PSOB) >=5000, PSOB) #### remove samples below 5000 read per samples
+
+PSBJ
+
+
+
+#### remove OTUs in  found less 1% of the samples ##########
+PSBJ.filtered <- phyloseq_filter_prevalence(PSBJ, prev.trh =0.01)
+PSBJ.filtered
+
+
+```
+
+
+```{r DESeq2 ,Include=FALSE}
+
+#################################Differential abundance  DESeq2 ##########################
+
+
+
+
+###################### differential abundance#################
+
+# Case_control DESeq2 analysis ##
+
+PSBJ.filtered #### start the Phyloseq object
+
+
+PSBJ.filtered_glom <- tax_glom(PSBJ.filtered,"Species")  ## agglomerate taxa at the species level.
+
+diagdds = phyloseq_to_deseq2(PSBJ.filtered_glom, ~season+ age_stratum+site+gender+control_fct)  ## we adjusted for season  age_stratum, site, gender. control_fct is the two label variable(diarrhea cases and non-diarrhea controls)
+
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric", sfType="poscounts")   
+
+
+
+res <- results(diagdds, contrast=c("control_fct","Control","Case")) ##### diarrhea cases compared with non-diarrhea controls
+res
+
+## filtering res##
+resordered<- res[order(res$padj),]
+resordered
+resordered_omited.NA <- na.omit(resordered)
+resordered_omited.NA
+summary(resordered_omited.NA)
+
+
+signi <- subset(resordered_omited.NA,padj<= 0.05) # significant at p.adj<=0.05
+signi
+
+
+
+####  prepare for pheatmap depection ####
+
+taxa_sig = rownames(signi) ##  
+
+ps.taxa.rel <- transform_sample_counts(PSBJ.filtered_glom, function(x) x/sum(x))
+ps.taxa.rel.sig <- prune_taxa(taxa_sig, ps.taxa.rel)
+
+ps.taxa.rel.sig <- prune_samples(colnames(otu_table(PSBJ.filtered_glom)), ps.taxa.rel.sig)
+
+ps.taxa.rel.sig_glom <- tax_glom(ps.taxa.rel.sig,"Species")
+
+ps.taxa.rel.sig_glom_filtered <- filter_taxa( ps.taxa.rel.sig_glom, function(x) mean(x) >0.001, TRUE) #  to keep zOTUs with  mean  relative abundance > 0.001 (to filter and remove those OTUs below 0.001  mean relative abundance 
+
+
+## create data frame ##
+data_otu<- data.frame(otu_table(ps.taxa.rel.sig_glom_filtered)) ## otu table 
+
+data_taxa <-data.frame(tax_table(ps.taxa.rel.sig_glom_filtered))
+
+
+data <- merge(data_taxa,data_otu, by=0)
+
+data <- as.data.frame(data,row.names = data$Row.names)[,-1]
+
+
+rownames(data) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])
+
+matrix_case_control <- as.matrix (data[,-c(1:7)])### this is the matrix for the heatmap case_control.
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata
+
+
+
+### pheatmap from Deseq2 results matrix #####
+
+matrix_case_control###  matrix from above  the DESeq2 result  
+
+metadata_sub  ## metadata
+
+## define annotation##
+annotation_col <- data.frame(
+  Enrolled_Children=factor(metadata_sub$control_fct),
+  Diarrhoea_type= factor(metadata_sub$diarrhoea_category),
+  Age_Stratum=factor(metadata_sub$age_stratum),
+  Clusters=factor(metadata_sub$Clusters)### clusters extracted from below of the heatmap.first run the heat map below and extract the clusters
+  
+)
+rownames(annotation_col)=rownames(metadata_sub) ## annotation column
+
+
+ann_colors = list(
+  Enrolled_Children = c(Case="tan1", Control="midnightblue"),
+  Diarrhoea_type=c(AD= "midnightblue", ProPD= "red",Control= "green"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+
+  Clusters= c("1"="#ed1299","2"="#09f9f5","3" ="#246b93" ,"4"="#cc8e12","5" ="#d561dd", "6"="#cebb10","7" ="#ddd53e")) ### annotation colors for the column
+
+row_names<- lapply(
+  rownames(matrix_case_control),
+  function(x) bquote(italic(.(x)))) ### to vitalize the row name
+
+
+case_control <- pheatmap(matrix_case_control,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col = colorRampPalette(c('black','gray98','gray98','white','white','#baf8f8','#baf8f8','#61ffff','#61ffff','cyan','cyan'))(1000), annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+        #cutree_cols = 7,
+        labels_row = as.expression(row_names),
+        width = 8,
+    height = 6,
+   treeheight_row=0) 
+
+
+## setting the cluster number to extract  the data #
+Clusters <- cutree(case_control$tree_col, k=7)[case_control$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+metadata_sub <- merge(metadata_sub,Clusters, by="row.names")
+
+metadata_sub<- as.data.frame(metadata_sub,row.names =metadata_sub$Row.names)[,-1]
+
+
+##### proportion of cases and controls in the each clusters ##   
+
+fr7 <- table(metadata_sub$Clusters,metadata_sub$control_fct) ## the number of case and control in  clusters
+fr7
+fr7.prop <- prop.table(fr7,1)*100 #calculate the percentage of rows # 
+
+fr7.prop
+
+
+
+#chi_square  by row  for 3 of the major cluster that contain most cases and controls###
+ 
+#cluster1
+cluster1 <- c(143,108)
+names(cluster1) <- c("Case","Control")
+cluster1
+
+
+# HO= lets assume there are equal proportion of  cases and control in cluster 1 i.e 50 
+#HA= The proportion of cases and controls are not the same in cluster 1
+
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+#culster2
+cluster2 <- c(163 ,	55)
+names(cluster2) <- c("Case","Control")
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+#culster3
+cluster3 <- c(338, 497)
+names(cluster3) <- c("Case","Control")
+probability3<- c(0.5, 0.5)
+chisq.test(cluster3, p= probability3)
+
+
+### Extracting most abundant  taxa in the 3 clusters of the case-control comparison above###
+
+### combine physloseq and clusters ###
+
+
+sample_data(ps.taxa.rel.sig_glom_filtered)$Clusters <- metadata_sub$Clusters
+ps.taxa.rel.sig_glom_filtered@sam_data$Clusters
+
+
+## subset of abundant  taxa from DESeq2 results of the case control comparison  ####
+
+phy<- subset_taxa(ps.taxa.rel.sig_glom_filtered, Species %in% c("Escherichia/Shigella Escherichia_fergusonii","Unclassified  Streptococcus","Unclassified  Campylobacter", "Prevotella Prevotella_copri", "Veillonella Veillonella_dispar", "Faecalibacterium Faecalibacterium_prausnitzii","Dialister Dialister_succinatiphilus","Bacteroides Bacteroides_fragilis","Unclassified Lachnospiraceae", "Unclassified  Bifidobacterium" )) 
+ 
+
+phy <- subset_samples(phy, Clusters %in% c("1","2","3")) ###  subset only major 3 clusters (1,2,3)
+
+ps0 <- phy
+
+#Select desired rank
+df <- psmelt(ps0)
+
+#Select last non-empty taxonomic rank
+df[df==""] <- NA
+
+df$tax <- apply(df, 1, function(x) tail(na.omit(x), 1))
+
+#Arrange smaples by mean abundance
+top <- df %>%
+  dplyr::group_by(Sample, tax) %>%
+  dplyr::summarize(Mean = mean(Abundance)) %>%
+  arrange(-Mean)
+#Show top
+top
+
+top10 <- top$tax
+df0 <- df %>%
+  mutate(tax = fct_other(tax, c(as.matrix(top10))))
+
+my_comparisons <- list( c("1", "2"), c("1", "3"), c("2", "3") )
+
+clusters <- ggboxplot(df0, x = "Clusters", y="Abundance",
+          color="tax",
+          facet.by = "tax",
+          scales = "free_y"
+)+
+  scale_fill_jco() +
+  theme_classic() +
+  scale_color_manual(values= col_fil)+
+  stat_compare_means(aes(group = Clusters),label = "p.signif", comparisons = my_comparisons) +
+  theme(
+    #axis.line=element_line(size=1),
+    axis.text=element_text(size=10, colour = "Black"),
+    axis.text.x=element_text(angle=90, hjust = 1, size=10),
+    axis.ticks=element_line(colour = "Black"),
+    strip.text.y = element_text(angle = 90,face = "italic"),
+    
+    #strip.text.x = element_blank(),
+    strip.background = element_blank(),
+    text = element_text(size = 10)
+  )
+
+clusters
+
+
+####### Wilcox rank sum test  for multiple columns diarrhea case and controls for selected significant taxa from the DESeq2 analysis ####
+
+
+dataWilcoxon <-as.data.frame(otu_table(ps.taxa.rel.sig_glom_filtered))
+
+rownames(dataWilcoxon) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])### change row names from zOTU to speceies names
+
+dataWilcoxon <- as.data.frame(t(dataWilcoxon))### transpose the data
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata 
+metadataWilcoxon <- metadata_sub ### take the metadata 
+
+metadataWilcoxon <- metadataWilcoxon[,c(5,6)] ## subsetting the case control status  column only for statistical test of the diarrhoea status 
+
+dataWilcoxon<- cbind(dataWilcoxon,metadataWilcoxon) ## combine metadata and microbiome data
+dataWilcoxon <- dataWilcoxon[,-c(64)] ## remove  column  64
+
+
+colnames(dataWilcoxon) <- gsub(" ","_", colnames(dataWilcoxon))## replacing space by "_"
+
+colnames(dataWilcoxon) <- gsub(":","_", colnames(dataWilcoxon))## replacing : by "_"
+
+colnames(dataWilcoxon) <- gsub("Escherichia/Shigella_Escherichia_fergusonii","Escherichia_fergusonii", colnames(dataWilcoxon))
+
+
+
+library(broom)
+
+modelList<-list()
+for(i in 1:62){ ##### 1:62 means the number of column that contain the species names 
+  fmla <- formula(paste(names(dataWilcoxon)[i], " ~ control_fct"))
+  modelList[[i]]<- wilcox.test(fmla, data = dataWilcoxon, paired = FALSE)
+}  ## Wilcox test 
+
+modelList
+
+
+df <- as.data.frame(do.call(cbind, modelList)) ## change the list to dataframe. 
+df<- as.data.frame(t(df)) # transposing the data frame
+
+df$p.adjust <- paste(p.adjust(df$p.value, method = "BH")) ## adjusting the p-value by "BH" method 
+
+df$data.name <- gsub("by control_fct"," ",df$data.name)## remove  "by control_fct" from the df dataframe.
+df$p.adjust <- as.numeric(df$p.adjust)## change p.adjust to numeric  
+df<- df[order(df$p.adjust),]  ## sorting from smallest to the largest p.adjust
+
+df<- df %>%
+  mutate (p_adjusted_symbol=case_when (p.adjust < 0.0001 ~ "****", p.adjust< 0.001 ~ "***", p.adjust< 0.01 ~ "**", p.adjust< 0.05 ~ "*", p.adjust > 0.05 ~ "NS" )) ### change p_adjsuted to symbols
+
+df <- apply(df,2,as.character) ## the statistical analysis results## 
+
+write.csv(df, "/Desktop/case_control_Wilcox.csv") ## export as csv file. 
+
+
+  
+## calculate the mean relative abundance of taxa  in Cases  and controls
+
+dataWilcoxon <- data.table(dataWilcoxon)### change  the data frame to data table 
+mean_abundance <-as.data.frame(dataWilcoxon[,lapply(.SD,mean), by = control_fct]) ## control_fct( case and control)
+
+
+mean_abundance_case_control_all<- as.data.frame(t(mean_abundance))
+
+
+write.csv(mean_abundance_cas_control_all, "/Desktop/case_control_mean_abudance.csv") #export as csv file. 
+
+
+
+##### Top 20 taxa of case_control from DESeq2 results###
+
+library(rabuplot)### to plot the top 20 taxa from case  control results. 
+
+case_control_top20txa <- rabuplot(ps.taxa.rel.sig_glom_filtered,
+  violin = TRUE, predictor = "control_fct",N_taxa=20,By_median =FALSE, type="species", p_stars=TRUE, p_adjust = TRUE,no_other_type=TRUE, colors =col_fil[1:2]) #if we have two comparison only 
+
+case_control_top20txa
+
+
+
+###The DESeq2 results were augmented by sparse partial least square discriminatory analysis (sPLS-DA) #### 
+
+### spares partial least square  discriminant analysis (sPLS-DA) model to select the features(zOTUs) 
+
+
+#case_control comparison
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library(caret)
+library(tidyverse)
+library(vegan)
+library(mixOmics)
+library(gplots)
+library(clusterSim)
+library(plyr)
+library(pheatmap)
+library(rgl)
+
+
+### sPLS_model
+
+PSBJ.filtered_glom <- tax_glom(PSBJ.filtered,"Species") ### agglomerated at species level
+PSBJ.filtered_glom ### 
+
+taxa_table<- as.data.frame(tax_table(PSBJ.filtered_glom))   ## otu table to check unique values of the taxa at species level  
+
+unique(taxa_table[,"Species"])### look the unique values of the species since it is not unique i will remove the  Unclassified Actinobacteria since the uniques are 437.only 
+PSBJ.filtered_glom<- subset_taxa(PSBJ.filtered_glom,Species != "Unclassified Actinobacteria") ## remove the "Unclassified Actinobacteria", at the species    level since it is duplicate 
+
+
+data_taxa<-data.frame(tax_table(PSBJ.filtered_glom))
+data_otu <- as.data.frame(otu_table(PSBJ.filtered_glom))
+
+dataset_case_control <- merge(data_taxa,data_otu,by=0)
+
+
+dataset_case_control <- as.data.frame(dataset_case_control,row.names = dataset_case_control$Row.names)[,-1]
+
+rownames(dataset_case_control) <- as.character(tax_table(PSBJ.filtered_glom)[, "Species"])
+
+dataset_case_control <- dataset_case_control[,-c(1:7)] 
+dataset_case_control <- t(dataset_case_control)
+
+#metadata_sub <- subset(metadata_sub,metadata_sub$diarrhoea!="NA")
+metadata_sub_case_control <- data.frame(sample_data(PSBJ.filtered)) ## metadata
+metadata_sub_case_control$diarrhoea_category <- revalue(metadata_sub_case_control$diarrhoea,c("AD"="AD","ProD"="ProPD", "PD"="ProPD","Cont"="Control"))### reclassifying the ProD and PD together 
+
+metadata_sub_case_control <- metadata_sub_case_control[,c("age_stratum","control_fct","diarrhoea","diarrhoea_category")] ### take the  specific column  used for analysis 
+ 
+dataset_case_control <- merge(metadata_sub_case_control,dataset_case_control, by="row.names")
+
+dataset_case_control_final <- as.data.frame(dataset_case_control,row.names =dataset_case_control$Row.names)[,-1] ## this is the data set used for the model.
+
+set.seed(10000)
+Y = dataset_case_control_final[,c(1:4)]
+X = dataset_case_control_final[,-c(1:4)]
+X = X/(rowSums(X))  ### calculate the relative abundances of of each species in the individual samples 
+X <- X[, which(as.numeric(colSums(X != 0)) > 15)]
+
+smp_size = floor(0.70 * nrow(dataset_case_control_final))
+train_ind = sample(seq_len(nrow(dataset_case_control_final)), size = smp_size)
+
+Xtrain = X[train_ind, ]
+Xtest =  X[-train_ind, ]
+
+Ytrain = dataset_case_control_final[train_ind, ][,c(2)]
+Ytest = dataset_case_control_final[-train_ind, ][,c(2)]
+
+list.keepX <- c(seq(20, 100, 5))
+tune.splsda.srbct <- tune.splsda(Xtrain, Ytrain, ncomp = 5, validation = 'Mfold', folds = 10,  progressBar = TRUE, dist = 'max.dist', measure = "BER", test.keepX = list.keepX, nrepeat = 10, cpus = 4)
+error <- tune.splsda.srbct$error.rate
+ncomp <- tune.splsda.srbct$choice.ncomp$ncomp
+select.keepX <- tune.splsda.srbct$choice.keepX[1:ncomp]
+plot(tune.splsda.srbct)
+
+splsda.srbct <- splsda(Xtrain, Ytrain, ncomp = ncomp, keepX = select.keepX)
+plotIndiv(splsda.srbct, comp = c(1,2), group = Ytrain, ind.names = FALSE, ellipse = TRUE)
+auc.splsda = auroc(splsda.srbct, roc.comp = 2)
+
+Case_Control_Roc= auroc(splsda.srbct, roc.comp = 2) ## Roc curve
+
+perf.srbct <- perf(splsda.srbct, validation = "Mfold", folds = 10 ,dist = 'max.dist', nrepeat = 10,progressBar = TRUE)
+perf.srbct$error.rate
+plot(perf.srbct)
+
+
+test.predict <- predict(splsda.srbct, Xtest, dist = "max.dist")
+table(data.frame(test.predict$class$max.dist)[,ncomp],Ytest)    #confusion matrix
+
+selectedVars = as.vector(unique(c(selectVar(splsda.srbct, comp = 1)$name, selectVar(splsda.srbct, comp = 2)$name, selectVar(splsda.srbct, comp = 2)$name)))
+XX = X[,selectedVars]
+XXn =  data.Normalization(XX,type="n4",normalization="column")
+XXn <- as.matrix(t(XXn))
+
+thresh <- 0.02 ## threshold for filtering  of the  filter those OTUs greater than 0.02  rowMeans 
+
+XXn<- XXn[
+  rowMeans(XXn)
+   > thresh,] # 
+
+
+XXn ### use this matrix for heat map
+
+
+###  preparing for pheatmap depiction of sPLS-DA case control comparison #####
+
+annotation_col <- data.frame(
+  Enrolled_Children=factor(dataset_case_control_final$control_fct),
+  Diarrhoea_type= factor(dataset_case_control_final$diarrhoea_category),
+  Age_Stratum=factor(dataset_case_control_final$age_stratum),
+  Clusters=factor(dataset_case_control_final$Clusters) 
+)
+rownames(annotation_col)=rownames(dataset_case_control_final) ## annotation column
+
+
+ann_colors = list(
+ Enrolled_Children = c(Case="tan1", Control="midnightblue"),
+  Diarrhoea_type=c(AD= "midnightblue", ProPD= "red",Control= "green"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+ Clusters= c("1"="#ed1299","2"="#09f9f5","3" ="#246b93","4"="#cc8e12"))
+
+row_names<- lapply(
+  rownames(XXn),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+
+
+palette <- hcl.colors(1000,palette = "Zissou 1", alpha = NULL, rev = FALSE, fixup = TRUE)
+palette[1:200] <- "black"   ### color plate 
+
+
+
+case_control_sPLS <- pheatmap(XXn,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col =palette,
+         annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+        cutree_cols = 4,
+        labels_row = as.expression(row_names),
+        width = 8,
+    height = 6,
+   treeheight_row=0) 
+
+case_control_sPLS
+      
+## setting the cluster number to extract  the data"
+
+Clusters <- cutree(case_control_sPLS$tree_col, k=4)[case_control_sPLS$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+dataset_case_control_final <- merge(dataset_case_control_final,Clusters, by="row.names")
+
+dataset_case_control_final<- as.data.frame(dataset_case_control_final,row.names =dataset_case_control_final$Row.names)[,-1]
+
+
+
+
+##### proportion of cases and controls in the clusters ##   
+
+fr4 <- table(dataset_case_control_final$Clusters,dataset_case_control_final$control_fct)
+fr4
+fr4.prop <- prop.table(fr4,1)*100 #calculate the percentage of rows 
+fr4.prop
+
+######chi_square  by row  for 3 of the major cluster that contain most cases and controls###
+
+#culster1
+cluster1<- c(239, 217)
+names(cluster1) <- c("Case","Control")
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+#culster2
+cluster2<- c(150 , 53)
+names(cluster2) <-  c("Case","Control")
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+
+#culster3
+cluster3<- c(260, 393)
+names(cluster3) <- c("Case","Control")
+probability3 <- c(0.5, 0.5)
+chisq.test(cluster3, p= probability3)
+
+```
+
+
+```{r Deseq2 ,Include=FALSE}
+   
+
+
+######Diarrhoea duration differential abundance######################
+
+PSBJ.filtered <-subset_samples(PSBJ.filtered,diarrhoea_category!="NA") #### start the Phyloseq object 
+
+
+PSBJ.filtered_glom_AD_ProPD <- tax_glom(PSBJ.filtered,"Species")
+
+PSBJ.filtered__glom_AD_ProPD_sub <- subset_samples(PSBJ.filtered_glom_AD_ProPD, diarrhoea_category %in% c("AD", "ProPD"))
+
+
+diagdds = phyloseq_to_deseq2(PSBJ.filtered_glom_AD_ProPD, ~season+age_stratum+site+gender+diarrhoea_category) ## adjusted for age_stratum, season, site and gender
+
+
+diagdds = DESeq(diagdds,test="Wald",fitType="parametric",sfType="poscounts")
+
+
+res <- results(diagdds, contrast=c("diarrhoea_category","AD","ProPD")) ## AD(acute diarrhea  and ProPD (prolonged or persistent diarrhea)
+
+res
+
+
+resordered<- res[order(res$padj),]
+resordered
+resordered_omited.NA <- na.omit(resordered)
+resordered_omited.NA
+summary(resordered_omited.NA)
+
+signi <- subset(resordered_omited.NA,padj<=0.05)  ##significant at  padj<=0.05
+signi
+
+
+###prepare for Heat map AD_ProPD####
+
+taxa_sig = rownames(signi) ##  pdaj<= 0.05 
+
+ps.taxa.rel <- transform_sample_counts(PSBJ.filtered_glom_AD_ProPD, function(x) x/sum(x))
+
+
+ps.taxa.rel.sig <- prune_taxa(taxa_sig, ps.taxa.rel)
+
+
+
+ps.taxa.rel.sig<- prune_samples(colnames(otu_table(PSBJ.filtered__glom_AD_ProPD_sub)), ps.taxa.rel.sig)
+
+
+ps.taxa.rel.sig_glom <- tax_glom(ps.taxa.rel.sig,"Species")
+
+ps.taxa.rel.sig_glom_filtered<- filter_taxa( ps.taxa.rel.sig_glom, function(x) mean(x) > 0, TRUE) #  to keep OTUs with  mean  relative abundance > 0.001 (to filter and remove those OTUs below 0.001  mean relative abundance 
+
+## data frame##
+data_otu<- data.frame(otu_table(ps.taxa.rel.sig_glom_filtered)) ## otu table 
+
+data_taxa <-data.frame(tax_table(ps.taxa.rel.sig_glom_filtered))
+
+
+data <- merge(data_taxa,data_otu, by=0)
+
+data <- as.data.frame(data,row.names = data$Row.names)[,-1]
+
+
+rownames(data) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])
+
+matrix_AD_ProPD <- as.matrix (data[,-c(1:7)])
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata
+
+
+### Pheatmap from Deseq2 results matrix #####
+
+  
+matrix_AD_ProPD # matrix from above  the Deseq2 result 
+
+metadata_sub ###metadata from the obove 
+
+
+## define annotation##
+annotation_col <- data.frame(
+  
+  Diarrhoea_type= factor(metadata_sub$diarrhoea_category),
+  Age_Stratum=factor(metadata_sub$age_stratum),
+  Clusters=factor(metadata_sub$Clusters)
+)
+rownames(annotation_col)=rownames(metadata_sub) ## annotation column
+
+
+ann_colors = list(
+  
+  Diarrhoea_type=c(AD= "tan1", ProPD= "midnightblue"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+  Clusters= c("1"="#ed1299","2"="#09f9f5"))
+  
+### annotation colors for the column
+
+row_names<- lapply(
+  rownames(matrix_AD_ProPD),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+## pheamap depiction of D and ProPD####
+
+AD_ProPD <- pheatmap(matrix_AD_ProPD,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col = colorRampPalette(c('black','gray98','gray98','white','white','#baf8f8','#baf8f8','#61ffff','#61ffff','cyan','cyan'))(1000), annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+        labels_row = as.expression(row_names),
+        cutree_cols = 2,
+       width = 8,
+    height = 6,
+   treeheight_row=0)
+
+
+## setting the cluster number to extract  the data"
+Clusters <- cutree(AD_ProPD$tree_col, k=2)[AD_ProPD$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+metadata_sub<- merge(metadata_sub,Clusters, by="row.names")
+
+metadata_sub<- as.data.frame(metadata_sub,row.names =metadata_sub$Row.names)[,-1]
+
+
+
+##### proportion of AD and ProPD in the each clusters##   
+
+fr2 <- table(metadata_sub$Clusters,metadata_sub$diarrhoea_category)
+fr2
+fr2.prop <- prop.table(fr2,1)*100 #calculate the percentage of rows # put 2 instead of 1 to calcute the column percentage
+
+fr2.prop
+
+
+##chi_square  by row  for 2 lusters that contain most AD and ProPD###
+
+
+cluster1<- c(354, 48)
+names(cluster1) <- c("AD","ProPD")
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+
+#cluster2
+
+cluster2<- c(200, 47)
+names(cluster2) <- c("AD","ProPD")
+cluster2
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+ 
+
+
+####### Wilcox rank sum test  for multiple columns
+############## AD and ProPD  Wilcox rank test for selected significant taxa ####
+
+
+dataWilcoxon <-as.data.frame(otu_table(ps.taxa.rel.sig_glom_filtered))
+
+rownames(dataWilcoxon) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])### change row names from zOTU to speceies names
+
+dataWilcoxon <- as.data.frame(t(dataWilcoxon))### transpose the data
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata 
+metadataWilcoxon <- metadata_sub ### take the metadata 
+
+metadataWilcoxon <- metadataWilcoxon[,c(127,128)] ## subsetting the AD and ProPD status  column only for statistical test  
+
+dataWilcoxon<- cbind(dataWilcoxon,metadataWilcoxon) ## combine metadata and microbiome data
+dataWilcoxon <- dataWilcoxon[,-c(43)] ## remove the column  43
+
+
+colnames(dataWilcoxon) <- gsub(" ","_", colnames(dataWilcoxon))## replacing space by "_"
+
+colnames(dataWilcoxon) <- gsub(":","_", colnames(dataWilcoxon))## replacing : by "_"
+
+colnames(dataWilcoxon) <- gsub("Escherichia/Shigella_Escherichia_fergusonii","Escherichia_fergusonii", colnames(dataWilcoxon))
+
+
+library(broom)
+
+modelList<-list()
+for(i in 1:41){ ##### 1:41 means the number of column that contain the species names 
+  fmla <- formula(paste(names(dataWilcoxon)[i], " ~ diarrhoea_category"))
+  modelList[[i]]<- wilcox.test(fmla, data = dataWilcoxon, paired = FALSE)
+}  ## Wilcox test 
+
+modelList
+
+
+df <- as.data.frame(do.call(cbind, modelList)) ## change the list to data frame. 
+df<- as.data.frame(t(df)) # transposing the data frame
+
+df$p.adjust <- paste(p.adjust(df$p.value, method = "BH"))
+
+df$data.name <- gsub("by diarrhoea_category"," ",df$data.name)## remove  "by diarrhoea_category" from the df dataframe.
+df$p.adjust <- as.numeric(df$p.adjust)## change p.adjust to numeric  
+df<- df[order(df$p.adjust),]  ## sorting from smallest to the largest p.adjust
+
+df<- df %>%
+  mutate (p_adjusted_symbol=case_when (p.adjust < 0.0001 ~ "****", p.adjust< 0.001 ~ "***", p.adjust< 0.01 ~ "**", p.adjust< 0.05 ~ "*", p.adjust > 0.05 ~ "NS" )) ### change p_adjsuted to symbols
+
+df <- apply(df,2,as.character)  ## export  df  in excel as need.  
+ 
+
+## calculate the mean relative abundance  taxa of  in AD  and ProPD
+
+dataWilcoxon <- data.table(dataWilcoxon)### change  the data frame to data table 
+mean_abundance <-as.data.frame(dataWilcoxon[,lapply(.SD,mean), by = diarrhoea_category])
+
+
+mean_abundance_AD_ProPD<- as.data.frame(t(mean_abundance))
+
+
+##### Top 20 taxa of AD_ProPD from DESeq2 results###
+
+library(rabuplot)###  plot the top 20 taxa
+
+AD_ProPD_top20txa <- rabuplot(ps.taxa.rel.sig_glom_filtered,
+  violin = TRUE, predictor = "diarrhoea_category",N_taxa=20,By_median =FALSE, type="species", p_stars=TRUE, p_adjust = TRUE,no_other_type=TRUE, colors=col_fil[5:4]) #if we have two comparison only   
+ 
+
+
+### sPLS_model diarrhea duration (AD and ProPD)# #
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library(caret)
+library(tidyverse)
+library(vegan)
+library(mixOmics)
+library(gplots)
+library(clusterSim)
+library(plyr)
+library(pheatmap)
+library(rgl)
+
+PSBJ.filtered_AD_ProD_PD_sub <- subset_samples(PSBJ.filtered, diarrhoea %in% c("AD", "ProD","PD"))
+
+PSBJ.filtered_AD_ProD_PD_sub_glom <- tax_glom(PSBJ.filtered_AD_ProD_PD_sub,"Species") ### agglomerated at species level
+PSBJ.filtered_AD_ProD_PD_sub_glom ### 
+
+taxa_table<- as.data.frame(tax_table(PSBJ.filtered_AD_ProD_PD_sub_glom))     
+
+unique(taxa_table[,"Species"])### look the unique values of the species 
+PSBJ.filtered_AD_ProD_PD_sub_glom<- subset_taxa(PSBJ.filtered_AD_ProD_PD_sub_glom,Species != "Unclassified Actinobacteria") ## remove the "Unclassified Actinobacteria", at the specifies   level since it is duplicate 
+
+
+data_taxa<-data.frame(tax_table(PSBJ.filtered_AD_ProD_PD_sub_glom))
+data_otu <- as.data.frame(otu_table(PSBJ.filtered_AD_ProD_PD_sub_glom))
+
+dataset_AD_ProD_PD<- merge(data_taxa,data_otu,by=0)
+
+
+dataset_AD_ProD_PD<- as.data.frame(dataset_AD_ProD_PD,row.names = dataset_AD_ProD_PD$Row.names)[,-1]
+
+rownames(dataset_AD_ProD_PD) <- as.character(tax_table(PSBJ.filtered_AD_ProD_PD_sub_glom)[, "Species"])
+
+dataset_AD_ProD_PD <- dataset_AD_ProD_PD[,-c(1:7)] 
+dataset_AD_ProD_PD <- t(dataset_AD_ProD_PD)
+
+#metadata_sub <- subset(metadata_sub,metadata_sub$diarrhoea!="NA")
+metadata_sub_AD_ProD_AD<- data.frame(sample_data(PSBJ.filtered_AD_ProD_PD_sub_glom)) ## metadata
+metadata_sub_AD_ProD_AD$diarrhoea_category <- revalue(metadata_sub_AD_ProD_AD$diarrhoea,c("AD"="AD","ProD"="ProPD", "PD"="ProPD"))### reclassifying the ProD and PD together 
+
+metadata_sub_AD_ProD_AD <- metadata_sub_AD_ProD_AD[,c("age_stratum","diarrhoea_category")] ### take the  specific column  used for analyis 
+ 
+dataset_AD_ProD_PD <- merge(metadata_sub_AD_ProD_AD,dataset_AD_ProD_PD, by="row.names")
+
+dataset_AD_ProD_PD_final <- as.data.frame(dataset_AD_ProD_PD,row.names =dataset_AD_ProD_PD$Row.names)[,-1] ## this is the data set used for the model.
+
+set.seed(10000)
+Y = dataset_AD_ProD_PD_final[,c(1:2)]
+X = dataset_AD_ProD_PD_final[,-c(1:2)]
+X = X/(rowSums(X))  
+X <- X[, which(as.numeric(colSums(X != 0)) > 15)]
+
+smp_size = floor(0.70 * nrow(dataset_AD_ProD_PD_final))
+train_ind = sample(seq_len(nrow(dataset_AD_ProD_PD_final)), size = smp_size)
+
+Xtrain = X[train_ind, ]
+Xtest =  X[-train_ind, ]
+
+Ytrain = dataset_AD_ProD_PD_final[train_ind, ][,c(2)]
+Ytest = dataset_AD_ProD_PD_final[-train_ind, ][,c(2)]
+
+list.keepX <- c(seq(20, 100, 5))
+tune.splsda.srbct <- tune.splsda(Xtrain, Ytrain, ncomp = 5, validation = 'Mfold', folds = 10,  progressBar = TRUE, dist = 'max.dist', measure = "BER", test.keepX = list.keepX, nrepeat = 10, cpus = 4)
+error <- tune.splsda.srbct$error.rate
+ncomp <- tune.splsda.srbct$choice.ncomp$ncomp
+select.keepX <- tune.splsda.srbct$choice.keepX[1:ncomp]
+plot(tune.splsda.srbct)
+
+splsda.srbct <- splsda(Xtrain, Ytrain, ncomp = ncomp, keepX = select.keepX)
+plotIndiv(splsda.srbct, comp = c(1,2), group = Ytrain, ind.names = FALSE, ellipse = TRUE)
+auc.splsda = auroc(splsda.srbct, roc.comp = 2)
+
+AD_ProPD_Roc = auroc(splsda.srbct, roc.comp = 2) ## Roc curve
+
+perf.srbct <- perf(splsda.srbct, validation = "Mfold", folds = 10 ,dist = 'max.dist', nrepeat = 10,progressBar = TRUE)
+perf.srbct$error.rate
+plot(perf.srbct)
+
+
+test.predict <- predict(splsda.srbct, Xtest, dist = "max.dist")
+table(data.frame(test.predict$class$max.dist)[,ncomp],Ytest)    #confusion matrix
+
+selectedVars = as.vector(unique(c(selectVar(splsda.srbct, comp = 1)$name, selectVar(splsda.srbct, comp = 2)$name, selectVar(splsda.srbct, comp = 2)$name)))
+XX = X[,selectedVars]
+XXn =  data.Normalization(XX,type="n4",normalization="column")
+XXn <- as.matrix(t(XXn))
+
+
+thresh <- 0.01 ## throshhod for filtering  of the matrix 
+
+XXn<- XXn[
+  rowMeans(XXn)
+   > thresh,] # 
+
+
+
+###  pheat map depiction preaprtion #####
+
+annotation_col <- data.frame(
+ Diarrhoea_type= factor(dataset_AD_ProD_PD_final$diarrhoea_category),
+  Age_Stratum=factor(dataset_AD_ProD_PD_final$age_stratum),
+ Clusters=factor(dataset_AD_ProD_PD_final$Clusters)
+  )
+rownames(annotation_col)=rownames(dataset_AD_ProD_PD_final) ## annotation column
+
+
+
+ann_colors = list(
+  Diarrhoea_type=c(AD= "tan1", ProPD= "midnightblue"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+  Clusters= c("1"="#ed1299","2"="#09f9f5","3" ="#246b93"))
+
+
+
+## define colors 
+palette <- hcl.colors(1000,palette = "Zissou 1", alpha = NULL, rev = FALSE, fixup = TRUE)
+palette[1:200] <- "black"
+
+row_names<- lapply(
+  rownames(XXn),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+
+
+AD_ProD_sPLS <- pheatmap(XXn,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col =palette, annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+        width = 8,
+       height = 6,
+       treeheight_row=0,
+        labels_row = as.expression(row_names),
+         cutree_col=3)
+
+
+
+## setting the cluster number to extract  the data"
+Clusters <- cutree(AD_ProD_sPLS$tree_col, k=3)[AD_ProD_sPLS$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+dataset_AD_ProD_PD_final<- merge(dataset_AD_ProD_PD_final,Clusters, by="row.names")
+
+dataset_AD_ProD_PD_final<- as.data.frame(dataset_AD_ProD_PD_final,row.names =dataset_AD_ProD_PD_final$Row.names)[,-1]
+
+
+
+##### proportion of AD and ProPD in the 3 cluster##   
+
+fr3 <- table(dataset_AD_ProD_PD_final$Clusters,dataset_AD_ProD_PD_final$diarrhoea_category)
+fr3
+fr3.prop <- prop.table(fr3,1)*100 #calculate the percentage of rows##
+
+fr3.prop
+
+#chi_square  by row  for 3 Clusters that contain most AD and ProPD ##
+
+#cluster1
+
+cluster1<- c(277, 58)
+names(cluster1) <- c("AD","ProPD")
+cluster1
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+
+#cluster2
+
+cluster2<- c(276, 37)
+names(cluster2) <- c("AD","ProD")
+cluster2
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+
+
+#cluster3
+
+cluster3<- c(42, 18)
+names(cluster3) <- c("AD","ProD")
+cluster3
+probability3 <- c(0.5, 0.5)
+chisq.test(cluster3, p= probability3)
+
+```
+
+
+```{r Deseq2 ,Include=FALSE}
+
+###  Differential abundance Acute diarrhea (AD)  and Controls ######
+
+
+
+PSBJ.filtered <-subset_samples(PSBJ.filtered,diarrhoea_category!="NA") #### start the Phyloseq object 
+PSBJ.filtered
+
+
+PSBJ.filtered_glom_AD_Cont<- tax_glom(PSBJ.filtered,"Species")
+
+PSBJ.filtered_glom_AD_Cont_sub <- subset_samples(PSBJ.filtered_glom_AD_Cont, diarrhoea_category %in% c("AD", "Control"))
+
+diagdds = phyloseq_to_deseq2(PSBJ.filtered_glom_AD_Cont, ~season+age_stratum+site+gender+diarrhoea_category)
+diagdds = DESeq(diagdds,test="Wald",fitType="parametric",sfType="poscounts")
+
+res <- results(diagdds, contrast=c("diarrhoea_category","AD","Control")) ## AD and  Cont(Control)#####
+
+
+resordered<- res[order(res$padj),]  
+resordered
+resordered_omited.NA <- na.omit(resordered)
+resordered_omited.NA
+
+
+signi <- subset(resordered_omited.NA,padj<=0.05)# significant at padj<=0.05
+signi
+
+
+###prepare for heat map AD_Contconrol ####
+
+
+taxa_sig = rownames(signi) 
+
+ps.taxa.rel <- transform_sample_counts(PSBJ.filtered_glom_AD_Cont, function(x) x/sum(x))
+ps.taxa.rel.sig <- prune_taxa(taxa_sig, ps.taxa.rel)
+
+ps.taxa.rel.sig <- prune_samples(colnames(otu_table(PSBJ.filtered_glom_AD_Cont_sub)), ps.taxa.rel.sig)
+
+ps.taxa.rel.sig_glom <- tax_glom(ps.taxa.rel.sig,"Species")
+
+ps.taxa.rel.sig_glom_filtered<- filter_taxa( ps.taxa.rel.sig_glom, function(x) mean(x) > 0.001, TRUE) #  to keep OTUs with  mean  relative abundance > 0.001 (to filter and remove those OTUs below 0.001  mean relative abundance 
+
+##dataframe##
+data_otu<- data.frame(otu_table(ps.taxa.rel.sig_glom_filtered)) ## otu table 
+
+data_taxa <-data.frame(tax_table(ps.taxa.rel.sig_glom_filtered))
+
+
+data <- merge(data_taxa,data_otu, by=0)
+
+data <- as.data.frame(data,row.names = data$Row.names)[,-1]
+
+
+rownames(data) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])
+
+matrix_AD_Cont <- as.matrix (data[,-c(1:7)])
+
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata
+
+### pheat map from DESeq2 results matrix #####
+
+  
+matrix_AD_Cont # matrix from above  the Deseq2 result 
+
+metadata_sub ###metadata from the above 
+
+## define annotation##
+
+annotation_col <- data.frame(
+  
+  Diarrhoea_type= factor(metadata_sub$diarrhoea_category),
+  Age_Stratum=factor(metadata_sub$age_stratum),
+  Clusters=factor(metadata_sub$Clusters)
+)
+rownames(annotation_col)=rownames(metadata_sub) ## annotation column
+
+
+ann_colors = list(
+  
+  Diarrhoea_type=c(AD= "tan1", Control= "midnightblue"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+Clusters= c("1"="#ed1299","2"="#09f9f5","3" ="#246b93","4"="#cc8e12","5" ="#d561dd", "6"="#925bea","7" ="#ddd53e","8" ="#4aef7b", "9" ="#e86502","10" ="lightskyblue"))
+  ### annotation colors for the column
+
+ 
+   
+## define colors 
+palette <- hcl.colors(1000,palette = "Zissou 1", alpha = NULL, rev = FALSE, fixup = TRUE)
+palette[1:200] <- "black"
+
+row_names<- lapply(
+  rownames(matrix_AD_Cont),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+## pheatmap##
+AD_Cont <- pheatmap(matrix_AD_Cont,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col = colorRampPalette(c('black','gray98','gray98','white','white','#baf8f8','#baf8f8','#61ffff','#61ffff','cyan','cyan'))(1000), annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+labels_row = as.expression(row_names),
+          width = 8,
+         height = 6,
+       treeheight_row=0,
+         cutree_col=10)
+        
+
+
+## setting the clusteers number to extract  the data"
+Clusters <- cutree(AD_Cont$tree_col, k=10)[AD_Cont$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+metadata_sub<- merge(metadata_sub,Clusters, by="row.names")
+
+metadata_sub<- as.data.frame(metadata_sub,row.names =metadata_sub$Row.names)[,-1]
+
+
+##### proportion of AD and controls in the clusters ##   
+
+fr10 <- table(metadata_sub$Clusters,metadata_sub$diarrhoea_category)
+fr10
+fr10.prop <- prop.table(fr10,1)*100 #calculate the percentage of rows # put 2 instead of 1 to calculate the column percentage
+
+fr10.prop
+
+##chi_square  by row  for 5 Clusters that contain most AD and control##
+
+#cluster1
+
+cluster1<- c(181, 211)
+names(cluster1) <- c("AD","Control")
+cluster1
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+
+#cluster2
+
+cluster2<- c(119, 45)
+names(cluster2) <- c("AD","Control")
+cluster2
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+
+#cluster3
+
+cluster3<- c(206, 362)
+names(cluster3) <- c("AD","Control")
+cluster3
+probability3 <- c(0.5, 0.5)
+chisq.test(cluster3, p= probability3)
+
+#cluster4##
+
+cluster4<- c(13, 3)
+names(cluster4) <- c("AD","Control")
+cluster4
+probability4 <- c(0.5, 0.5)
+chisq.test(cluster4, p= probability4)
+
+#cluster5
+
+cluster5<- c(22, 34)
+names(cluster5) <- c("AD","Control")
+cluster5
+probability5 <- c(0.5, 0.5)
+chisq.test(cluster5, p= probability5)
+
+
+
+####### Wilcox rank sum test  for multiple columns AD and controls  for selected significant taxa  from the DESeq2 result####
+
+
+dataWilcoxon <-as.data.frame(otu_table(ps.taxa.rel.sig_glom_filtered))
+
+rownames(dataWilcoxon) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])### change row names from zOTU to speceies names
+
+dataWilcoxon <- as.data.frame(t(dataWilcoxon))### transpose the data
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata 
+metadataWilcoxon <- metadata_sub ### take the metadata 
+
+metadataWilcoxon <- metadataWilcoxon[,c(127,128)] ## Subsetting the AD and controls status   column  for statistical test  
+
+dataWilcoxon<- cbind(dataWilcoxon,metadataWilcoxon) ## combine metadata and microbiome data
+dataWilcoxon <- dataWilcoxon[,-c(51)] ## remove the site column 
+
+
+colnames(dataWilcoxon) <- gsub(" ","_", colnames(dataWilcoxon))## replacing space by "_"
+
+colnames(dataWilcoxon) <- gsub(":","_", colnames(dataWilcoxon))## replacing : by "_"
+
+colnames(dataWilcoxon) <- gsub("Escherichia/Shigella_Escherichia_fergusonii","Escherichia_fergusonii", colnames(dataWilcoxon))
+
+
+library(broom)
+
+modelList<-list()
+for(i in 1:49){ ##### 1:49 means the number of column that contain the species names 
+  fmla <- formula(paste(names(dataWilcoxon)[i], " ~ diarrhoea_category"))
+  modelList[[i]]<- wilcox.test(fmla, data = dataWilcoxon, paired = FALSE)
+}  ## Wilcox test 
+
+modelList
+
+
+df <- as.data.frame(do.call(cbind, modelList)) ## change the list to data frame. 
+df<- as.data.frame(t(df)) # transposing the data frame
+
+df$p.adjust <- paste(p.adjust(df$p.value, method = "BH"))
+
+df$data.name <- gsub("by diarrhoea_category"," ",df$data.name)## remove  "by diarrhoea_category" from the df dataframe.
+df$p.adjust <- as.numeric(df$p.adjust)## change p.adjust to numeric  
+df<- df[order(df$p.adjust),]  ## sorting from smallest to the largest p.adjust
+
+df<- df %>%
+  mutate (p_adjusted_symbol=case_when (p.adjust < 0.0001 ~ "****", p.adjust< 0.001 ~ "***", p.adjust< 0.01 ~ "**", p.adjust< 0.05 ~ "*", p.adjust > 0.05 ~ "NS" )) ### change p_adjsuted to symbols
+
+df <- apply(df,2,as.character) ## export df as csv as needed 
+
+
+## calculate the mean relative abundance of taxa in AD  and control
+
+dataWilcoxon <- data.table(dataWilcoxon)### change  the data frame to data table 
+mean_abundance <-as.data.frame(dataWilcoxon[,lapply(.SD,mean), by = diarrhoea_category])
+
+
+mean_abundance_AD_control<- as.data.frame(t(mean_abundance))
+
+
+write.csv(mean_abundance_AD_control, "/Desktop/mean_abundance_AD_control.csv")
+
+
+
+##### top 20 taxa of AD_control from Deseq2 results###
+
+library(rabuplot)### to plot the top 20 taxa
+
+AD_control_top20txa <- rabuplot(ps.taxa.rel.sig_glom_filtered,
+  violin = TRUE, predictor = "diarrhoea_category",N_taxa=20,By_median =FALSE, type="species", p_stars=TRUE, p_adjust = TRUE,no_other_type=TRUE, colors = c("AD"= "#7AA6DC","Control"= "#EFC000")) 
+
+
+
+### sPLS_-DA model AD-control comparison##
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library(caret)
+library(tidyverse)
+library(vegan)
+library(mixOmics)
+library(gplots)
+library(clusterSim)
+library(plyr)
+library(pheatmap)
+library(rgl)
+
+PSBJ.filtered_AD_Cont_sub<- subset_samples(PSBJ.filtered, diarrhoea %in% c("AD", "Cont"))
+
+PSBJ.filtered_AD_Cont_sub_glom <- tax_glom(PSBJ.filtered_AD_Cont_sub,"Species") ### agglomerated at species level
+PSBJ.filtered_AD_Cont_sub_glom ### 
+
+taxa_table<- as.data.frame(tax_table(PSBJ.filtered_AD_Cont_sub_glom))   ## otu table to check unique values of the taxa at species level  
+
+unique(taxa_table[,"Species"])### look the unique values of the species since it is not unique 
+PSBJ.filtered_AD_Cont_sub_glom<- subset_taxa(PSBJ.filtered_AD_Cont_sub_glom,Species != "Unclassified Actinobacteria") ## remove the "Unclassified Actinobacteria", at the specifies   level since it is duplicate 
+PSBJ.filtered_AD_Cont_sub_glom
+
+data_taxa<-data.frame(tax_table(PSBJ.filtered_AD_Cont_sub_glom))
+data_otu <- as.data.frame(otu_table(PSBJ.filtered_AD_Cont_sub_glom))
+
+dataset_AD_Cont<- merge(data_taxa,data_otu,by=0)
+
+
+dataset_AD_Cont<- as.data.frame(dataset_AD_Cont,row.names = dataset_AD_Cont$Row.names)[,-1]
+
+rownames(dataset_AD_Cont) <- as.character(tax_table(PSBJ.filtered_AD_Cont_sub_glom)[, "Species"])
+
+dataset_AD_Cont <- dataset_AD_Cont[,-c(1:7)] 
+dataset_AD_Cont <- t(dataset_AD_Cont)
+
+#metadata_sub <- subset(metadata_sub,metadata_sub$diarrhoea!="NA")
+metadata_sub_AD_Cont<- data.frame(sample_data(PSBJ.filtered_AD_Cont_sub_glom)) ## metadata
+
+
+metadata_sub_AD_Cont <- metadata_sub_AD_Cont[,c("age_stratum","diarrhoea")] ### take the  specific column  used for analysis 
+ 
+dataset_AD_Cont <- merge(metadata_sub_AD_Cont,dataset_AD_Cont, by="row.names")
+
+dataset_AD_Cont_final <- as.data.frame(dataset_AD_Cont,row.names =dataset_AD_Cont$Row.names)[,-1] ## this is the data set used for the model.
+
+set.seed(10000)
+Y = dataset_AD_Cont_final[,c(1:2)]
+X = dataset_AD_Cont_final[,-c(1:2)]
+X = X/(rowSums(X))   
+X <- X[, which(as.numeric(colSums(X != 0)) > 15)]
+
+smp_size = floor(0.70 * nrow(dataset_AD_Cont_final))
+train_ind = sample(seq_len(nrow(dataset_AD_Cont_final)), size = smp_size)
+
+Xtrain = X[train_ind, ]
+Xtest =  X[-train_ind, ]
+
+Ytrain = dataset_AD_Cont_final[train_ind, ][,c(2)]
+Ytest = dataset_AD_Cont_final[-train_ind, ][,c(2)]
+
+list.keepX <- c(seq(20, 100, 5))
+tune.splsda.srbct <- tune.splsda(Xtrain, Ytrain, ncomp = 5, validation = 'Mfold', folds = 10,  progressBar = TRUE, dist = 'max.dist', measure = "BER", test.keepX = list.keepX, nrepeat = 10, cpus = 4)
+error <- tune.splsda.srbct$error.rate
+ncomp <- tune.splsda.srbct$choice.ncomp$ncomp
+select.keepX <- tune.splsda.srbct$choice.keepX[1:ncomp]
+plot(tune.splsda.srbct)
+
+splsda.srbct <- splsda(Xtrain, Ytrain, ncomp = ncomp, keepX = select.keepX)
+plotIndiv(splsda.srbct, comp = c(1,2), group = Ytrain, ind.names = FALSE, ellipse = TRUE)
+auc.splsda = auroc(splsda.srbct, roc.comp = 2)
+
+AD_control_Roc <- auroc(splsda.srbct, roc.comp = 2) ##  Roc curve
+
+perf.srbct <- perf(splsda.srbct, validation = "Mfold", folds = 10 ,dist = 'max.dist', nrepeat = 10,progressBar = TRUE)
+perf.srbct$error.rate
+plot(perf.srbct)
+
+
+test.predict <- predict(splsda.srbct, Xtest, dist = "max.dist")
+table(data.frame(test.predict$class$max.dist)[,ncomp],Ytest)    #confusion matrix
+
+selectedVars = as.vector(unique(c(selectVar(splsda.srbct, comp = 1)$name, selectVar(splsda.srbct, comp = 2)$name, selectVar(splsda.srbct, comp = 2)$name)))
+XX = X[,selectedVars]
+XXn =  data.Normalization(XX,type="n4",normalization="column")
+XXn <- as.matrix(t(XXn))
+
+thresh <- 0.02 ## threshold for filtering  of the taxa
+
+XXn<- XXn[
+  rowMeans(XXn)
+   > thresh,]  
+
+
+
+### pheat map depiction preparation #####
+
+annotation_col <- data.frame(
+ Diarrhoea_type= factor(dataset_AD_Cont_final$diarrhoea),
+  Age_Stratum=factor(dataset_AD_Cont_final$age_stratum)#,
+ #Clusters=factor(dataset_AD_Cont_final$Clusters)
+  )
+rownames(annotation_col)=rownames(dataset_AD_Cont_final) ## annotation column
+
+
+
+ann_colors = list(
+  Diarrhoea_type=c(AD= "tan1", Cont= "midnightblue"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+  Clusters= c("1"="#ed1299","2"="#09f9f5","3" ="#246b93","4"="#cc8e12")) ### annotation colors for the column
+
+
+
+## define colors 
+palette <- hcl.colors(1000,palette = "Zissou 1", alpha = NULL, rev = FALSE, fixup = TRUE)
+palette[1:200] <- "black"
+
+row_names<- lapply(
+  rownames(XXn),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+##pheat map 
+AD_Cont_sPLS <- pheatmap(XXn,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col =palette, annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+ labels_row = as.expression(row_names),
+ cutree_col=4,
+ width = 8,
+         height = 6,
+       treeheight_row=0) 
+
+
+## setting the cluster number to extract  the data"
+Clusters <- cutree(AD_Cont_sPLS$tree_col, k=4)[AD_Cont_sPLS$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+dataset_AD_Cont_final <- merge(dataset_AD_Cont_final,Clusters, by="row.names")
+
+dataset_AD_Cont_final<- as.data.frame(dataset_AD_Cont_final,row.names =dataset_AD_Cont_final$Row.names)[,-1]
+
+
+##### proportion of AD and controls in the clusters ##   
+
+fr4 <- table(dataset_AD_Cont_final$Clusters,dataset_AD_Cont_final$diarrhoea)
+fr4
+fr4.prop <- prop.table(fr4,1)*100 #calculate the percentage of rows 
+
+fr4.prop
+
+##chi_square  by row  for 3 Clusters that contain most AD and control#
+
+#cluster1
+
+cluster1<- c(130, 51)
+names(cluster1) <- c("AD","Cont")
+cluster1
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+
+#cluster2
+
+cluster2<- c(214, 246)
+names(cluster2) <- c("AD","Cont")
+cluster2
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+
+
+#cluster3
+
+cluster3<- c(206, 365)
+names(cluster3) <- c("AD","Cont")
+cluster3
+probability3 <- c(0.5, 0.5)
+chisq.test(cluster3, p= probability3)
+
+```
+
+```{r Deseq2 ,Include=FALSE}
+
+## differential abundance ProPD and Control###
+
+PSBJ.filtered <-subset_samples(PSBJ.filtered,diarrhoea_category!="NA") #### start the Phyloseq object 
+
+
+PSBJ.filtered_glom_ProD_Cont <- tax_glom(PSBJ.filtered,"Species")
+
+PSBJ.filtered_glom_ProD_Cont_sub <- subset_samples(PSBJ.filtered_glom_ProD_Cont, diarrhoea_category %in% c("ProPD", "Control"))
+
+diagdds = phyloseq_to_deseq2(PSBJ.filtered_glom_ProD_Cont, ~season+site+gender+age_stratum+diarrhoea_category)
+
+diagdds = DESeq(diagdds,test="Wald",fitType="parametric",sfType="poscounts")
+
+res <- results(diagdds, contrast=c("diarrhoea_category","ProPD","Control")) ## ProPD and  Cont(Control)#####
+
+res
+
+resordered<- res[order(res$padj),] 
+resordered
+resordered_omited.NA <- na.omit(resordered)
+resordered_omited.NA
+
+
+signi <- subset(resordered_omited.NA,padj<=0.05)  #significant at padj<=0.05
+signi
+ 
+
+###prepare for heat map ProPD and Control ###
+
+taxa_sig = rownames(signi) 
+
+ps.taxa.rel <- transform_sample_counts(PSBJ.filtered_glom_ProD_Cont, function(x) x/sum(x))
+ps.taxa.rel.sig <- prune_taxa(taxa_sig, ps.taxa.rel)
+
+
+ps.taxa.rel.sig <- prune_samples(colnames(otu_table(PSBJ.filtered_glom_ProD_Cont_sub)), ps.taxa.rel.sig)
+
+
+ps.taxa.rel.sig_glom <- tax_glom(ps.taxa.rel.sig,"Species")  
+
+ps.taxa.rel.sig_glom_filtered<- filter_taxa( ps.taxa.rel.sig_glom, function(x) mean(x) > 0.001, TRUE) #  to keep OTUs with  mean  relative abundance > 0.001 (to filter and remove those OTUs below 0.001  mean relative abundance 
+
+
+## data frame##
+data_otu<- data.frame(otu_table(ps.taxa.rel.sig_glom_filtered)) ## otu table 
+
+data_taxa <-data.frame(tax_table(ps.taxa.rel.sig_glom_filtered))
+
+
+data <- merge(data_taxa,data_otu, by=0)
+
+data <- as.data.frame(data,row.names = data$Row.names)[,-1]
+
+
+rownames(data) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])
+
+matrix_ProD_Cont <- as.matrix (data[,-c(1:7)])
+
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata
+
+
+### pheat map from Deseq2 results matrix #####
+
+  
+matrix_ProD_Cont  # matrix from above  the DESeq2 result 
+
+metadata_sub ###metadata from the above 
+
+## define annotation##
+annotation_col <- data.frame(
+  
+  Diarrhoea_type= factor(metadata_sub$diarrhoea_category),
+  Age_Stratum=factor(metadata_sub$age_stratum),
+  Clusters=factor(metadata_sub$Clusters)
+)
+rownames(annotation_col)=rownames(metadata_sub) ## annotation column
+
+
+ann_colors = list(
+  Diarrhoea_type=c(ProPD = "tan1", Control= "midnightblue"), 
+Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+  Clusters= c("1"="#ed1299","2"="#09f9f5"))### annotation colors for the column
+
+
+
+## define colors 
+palette <- hcl.colors(1000,palette = "Zissou 1", alpha = NULL, rev = FALSE, fixup = TRUE)
+palette[1:200] <- "black"
+
+row_names<- lapply(
+  rownames(matrix_ProD_Cont),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+
+## pheat map##
+
+ProD_Cont <- pheatmap(matrix_ProD_Cont,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col = colorRampPalette(c('black','gray98','gray98','white','white','#baf8f8','#baf8f8','#61ffff','#61ffff','cyan','cyan'))(1000), annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+        width = 8,
+         height = 6,
+       treeheight_row=0,
+       labels_row = as.expression(row_names),
+cutree_col=2) 
+
+
+## setting the cluster number to extract  the data####
+Clusters <- cutree(ProD_Cont$tree_col, k=2)[ProD_Cont$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+metadata_sub<- merge(metadata_sub,Clusters, by="row.names")
+
+metadata_sub<- as.data.frame(metadata_sub,row.names =metadata_sub$Row.names)[,-1]
+
+
+
+##### proportion of ProPD and controls in the clusters##   
+
+fr2 <- table(metadata_sub$Clusters,metadata_sub$diarrhoea_category)
+fr2
+fr2.prop <- prop.table(fr2,1)*100 #calculate the percentage of rows # 
+
+fr2.prop
+
+
+#chi_square  by row  for 2 Clusters that contain most ProPD and control#
+
+#cluster1
+
+cluster1<- c(41, 519)
+names(cluster1) <- c("ProPD","Control")
+cluster1
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+
+#cluster2
+
+cluster2<- c(54, 144)
+names(cluster2) <- c("ProPD","Control")
+cluster2
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+
+####### Wilcox rank sum test  for multiple columns
+############## ProPD and  Control  for selected significant taxa ####
+
+
+dataWilcoxon <-as.data.frame(otu_table(ps.taxa.rel.sig_glom_filtered))
+
+rownames(dataWilcoxon) <- as.character(tax_table(ps.taxa.rel.sig_glom_filtered)[, "Species"])### change row names from zOTU to speceies names
+
+dataWilcoxon <- as.data.frame(t(dataWilcoxon))### transpose the data
+
+metadata_sub <- data.frame(sample_data(ps.taxa.rel.sig_glom_filtered)) ## metadata 
+metadataWilcoxon <- metadata_sub ### take the metadata 
+
+metadataWilcoxon <- metadataWilcoxon[,c(127,128)] ## subsetting the ProPD and CONTROLstatus  column for statistical test  
+
+dataWilcoxon<- cbind(dataWilcoxon,metadataWilcoxon) ## combine metadata and microbiome data
+dataWilcoxon <- dataWilcoxon[,-c(50)] ## remove the  column 50 
+
+
+colnames(dataWilcoxon) <- gsub(" ","_", colnames(dataWilcoxon))## replacing space by "_"
+
+colnames(dataWilcoxon) <- gsub(":","_", colnames(dataWilcoxon))## replacing : by "_"
+
+colnames(dataWilcoxon) <- gsub("Escherichia/Shigella_Escherichia_fergusonii","Escherichia_fergusonii", colnames(dataWilcoxon))
+
+
+library(broom)
+
+modelList<-list()
+for(i in 1:48){ ##### 1:48 means the number of column that contain the species names 
+  fmla <- formula(paste(names(dataWilcoxon)[i], " ~ diarrhoea_category"))
+  modelList[[i]]<- wilcox.test(fmla, data = dataWilcoxon, paired = FALSE)
+}  ## Wilcox test 
+
+modelList
+
+
+df <- as.data.frame(do.call(cbind, modelList)) ## change the list to data frame. 
+df<- as.data.frame(t(df)) # transposing the data frame
+
+df$p.adjust <- paste(p.adjust(df$p.value, method = "BH"))
+
+df$data.name <- gsub("by diarrhoea_category"," ",df$data.name)## remove  "by giardia_status" from the df dataframe.
+df$p.adjust <- as.numeric(df$p.adjust)## change p.adjust to numeric  
+df<- df[order(df$p.adjust),]  ## sorting from smallest to the largest p.adjust
+
+df<- df %>%
+  mutate (p_adjusted_symbol=case_when (p.adjust < 0.0001 ~ "****", p.adjust< 0.001 ~ "***", p.adjust< 0.01 ~ "**", p.adjust< 0.05 ~ "*", p.adjust > 0.05 ~ "NS" )) ### change p_adjsuted to symbols
+
+df <- apply(df,2,as.character) ## export df as excel file as needed
+
+
+
+## calculate the mean relative abundance of taxa in  ProPD  and control
+
+dataWilcoxon <- data.table(dataWilcoxon)### change  the data frame to data table 
+mean_abundance <-as.data.frame(dataWilcoxon[,lapply(.SD,mean), by = diarrhoea_category])
+
+
+mean_abundance_ProPD_control<- as.data.frame(t(mean_abundance))
+
+
+
+##### top 20 taxa of ProPD  and control from DESeq2 results###
+
+library(rabuplot)### to plot the top 20 taxa
+
+ProPD_control_top20txa <- rabuplot(ps.taxa.rel.sig_glom_filtered,
+  violin = TRUE, predictor = "diarrhoea_category",N_taxa=20,By_median =FALSE, type="species", p_stars=TRUE, p_adjust = TRUE,no_other_type=TRUE, colors = c("Control"= "#EFC000","ProPD"= "#CD534C")) 
+
+
+
+### sPLS_DA- model ProPD and Controls ##
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+library(caret)
+library(tidyverse)
+library(vegan)
+library(mixOmics)
+library(gplots)
+library(clusterSim)
+library(plyr)
+library(pheatmap)
+library(rgl)
+
+PSBJ.filtered_ProD_PD_Cont_sub<- subset_samples(PSBJ.filtered, diarrhoea %in% c("ProD","PD" ,"Cont"))
+
+PSBJ.filtered_ProD_PD_Cont_sub_glom <- tax_glom(PSBJ.filtered_ProD_PD_Cont_sub,"Species") ### agglomerated at species level
+PSBJ.filtered_ProD_PD_Cont_sub_glom 
+
+taxa_table<- as.data.frame(tax_table(PSBJ.filtered_ProD_PD_Cont_sub_glom))   ## otu table to check uniqu values of the taxa at species level  
+
+unique(taxa_table[,"Species"])### look the unique values of the species since it is not unique remove the  Unclassified Actinobacteria 
+PSBJ.filtered_ProD_PD_Cont_sub_glom <- subset_taxa(PSBJ.filtered_ProD_PD_Cont_sub_glom ,Species != "Unclassified Actinobacteria") ## remove the "Unclassified Actinobacteria", at the specifies   level since it is duplicate 
+PSBJ.filtered_ProD_PD_Cont_sub_glom 
+
+data_taxa<-data.frame(tax_table(PSBJ.filtered_ProD_PD_Cont_sub_glom 
+))
+data_otu <- as.data.frame(otu_table(PSBJ.filtered_ProD_PD_Cont_sub_glom 
+))
+
+dataset_ProD_PD_Cont<- merge(data_taxa,data_otu,by=0)
+
+
+dataset_ProD_PD_Cont<- as.data.frame(dataset_ProD_PD_Cont,row.names = dataset_ProD_PD_Cont$Row.names)[,-1]
+
+rownames(dataset_ProD_PD_Cont) <- as.character(tax_table(PSBJ.filtered_ProD_PD_Cont_sub_glom)[, "Species"])
+
+dataset_ProD_PD_Cont <- dataset_ProD_PD_Cont[,-c(1:7)] 
+dataset_ProD_PD_Cont <- t(dataset_ProD_PD_Cont)
+
+
+metadata_sub_ProD_PD_Cont<- data.frame(sample_data(PSBJ.filtered_ProD_PD_Cont_sub_glom)) 
+## metadata
+metadata_sub_ProD_PD_Cont$diarrhoea_category <- revalue(metadata_sub_ProD_PD_Cont$diarrhoea,c("ProD"="ProPD", "PD"="ProPD","Cont"="Control"))### reclassifying the ProD and PD together 
+
+metadata_sub_ProD_PD_Cont <- metadata_sub_ProD_PD_Cont[,c("age_stratum","diarrhoea_category")] ### take the  specific column  used for analysis 
+ 
+dataset_ProD_Cont <- merge(metadata_sub_ProD_PD_Cont,dataset_ProD_PD_Cont, by="row.names")
+
+dataset_ProD_Cont_final <- as.data.frame(dataset_ProD_Cont,row.names =dataset_ProD_Cont$Row.names)[,-1] ## this is the data set used for the model.
+
+set.seed(10000)
+Y = dataset_ProD_Cont_final[,c(1:2)]
+X = dataset_ProD_Cont_final[,-c(1:2)]
+X = X/(rowSums(X))  
+
+X <- X[, which(as.numeric(colSums(X != 0)) > 15)]
+
+smp_size = floor(0.70 * nrow(dataset_ProD_Cont_final))
+train_ind = sample(seq_len(nrow(dataset_ProD_Cont_final)), size = smp_size)
+
+Xtrain = X[train_ind, ]
+Xtest =  X[-train_ind, ]
+
+Ytrain = dataset_ProD_Cont_final[train_ind, ][,c(2)]
+Ytest = dataset_ProD_Cont_final[-train_ind, ][,c(2)]
+
+list.keepX <- c(seq(20, 100, 5))
+tune.splsda.srbct <- tune.splsda(Xtrain, Ytrain, ncomp = 5, validation = 'Mfold', folds = 10,  progressBar = TRUE, dist = 'max.dist', measure = "BER", test.keepX = list.keepX, nrepeat = 10, cpus = 4)
+error <- tune.splsda.srbct$error.rate
+ncomp <- tune.splsda.srbct$choice.ncomp$ncomp
+select.keepX <- tune.splsda.srbct$choice.keepX[1:ncomp]
+plot(tune.splsda.srbct)
+
+splsda.srbct <- splsda(Xtrain, Ytrain, ncomp = ncomp, keepX = select.keepX)
+plotIndiv(splsda.srbct, comp = c(1,2), group = Ytrain, ind.names = FALSE, ellipse = TRUE)
+auc.splsda = auroc(splsda.srbct, roc.comp = 2)
+
+ProPD_Control_Roc= auroc(splsda.srbct, roc.comp = 2) # Roc Curve
+
+perf.srbct <- perf(splsda.srbct, validation = "Mfold", folds = 10 ,dist = 'max.dist', nrepeat = 10,progressBar = TRUE)
+perf.srbct$error.rate
+plot(perf.srbct)
+
+
+test.predict <- predict(splsda.srbct, Xtest, dist = "max.dist")
+table(data.frame(test.predict$class$max.dist)[,ncomp],Ytest)    #confusion matrix
+
+selectedVars = as.vector(unique(c(selectVar(splsda.srbct, comp = 1)$name, selectVar(splsda.srbct, comp = 2)$name, selectVar(splsda.srbct, comp = 2)$name)))
+XX = X[,selectedVars]
+XXn =  data.Normalization(XX,type="n4",normalization="column")
+XXn <- as.matrix(t(XXn))
+
+thresh <- 0.02 ## threshold for filtering  
+
+XXn <- XXn[
+  rowMeans(XXn)
+   > thresh,] 
+
+
+
+### heat map  depiction #####
+
+annotation_col <- data.frame(
+ Diarrhoea_type= factor(dataset_ProD_Cont_final$diarrhoea_category),
+  Age_Stratum=factor(dataset_ProD_Cont_final$age_stratum),
+ Clusters= factor(final$Clusters)
+ 
+  )
+rownames(annotation_col)=rownames(dataset_ProD_Cont_final) ## annotation column
+
+
+
+ann_colors = list(
+  Diarrhoea_type=c(ProPD= "tan1", Control= "midnightblue"), 
+  Age_Stratum = c("0-5m" = "lightskyblue", "6-11m" = "magenta", "12-23m"="tan4","24-60m"="black"),
+
+Clusters= c("1"="#ed1299","2"="#09f9f5","3" ="#246b93","4"="#cc8e12","5" ="#d561dd", "6"="#925bea","7" ="#ddd53e","8" ="#4aef7b", "9" ="#e86502","10" ="lightskyblue", "11"= "#39ba30","12" ="#6ad157","13" ="#8249aa", "14" ="#99db27","15"= "#e07233", "16"="#ff523f", "17"= "#ce2523"))
+
+
+
+## define colors 
+palette <- hcl.colors(1000,palette = "Zissou 1", alpha = NULL, rev = FALSE, fixup = TRUE)
+palette[1:200] <- "black"
+
+row_names<- lapply(
+  rownames(XXn),
+  function(x) bquote(italic(.(x)))) ### to italize the row names 
+
+
+ProD_Cont_sPLS <- pheatmap(XXn,cluster_rows = TRUE,
+         cluster_cols = TRUE, clustering_distance_rows = "canberra",
+         clustering_distance_cols = "canberra", clustering_method = "average",
+         col =palette, annotation_col=annotation_col,annotation_colors=ann_colors,
+         fontsize = 5,
+        show_colnames = F,
+        width = 8,
+         height = 6,
+       treeheight_row=0,
+       labels_row = as.expression(row_names),
+         cutree_col=17) #### this is the cluster number
+       
+       
+## setting the cluster number to extract  the data####
+Clusters <- cutree(ProD_Cont_sPLS$tree_col, k=17)[ProD_Cont_sPLS$tree_col[["order"]]]            
+Clusters <- data.frame(row.names = names(Clusters),
+                       Clusters = as.factor(Clusters))
+
+
+final <- merge(dataset_ProD_Cont_final,Clusters, by="row.names")
+
+final<- as.data.frame(final,row.names =final$Row.names)[,-1]
+
+
+
+##### proportion ProPD and controls in the clusters##   
+
+fr17 <- table(final$Clusters,final$diarrhoea_category)
+fr17
+fr17.prop <- prop.table(fr17,1)*100 #calculate the percentage of rows 
+
+fr17.prop
+
+
+#chi_square  by row  for 4 major  Clusters that contain most ProPD and control##
+
+#cluster1
+
+cluster1<- c(25, 293)
+names(cluster1) <- c("ProPD","Control")
+cluster1
+probability1 <- c(0.5, 0.5)
+chisq.test(cluster1, p= probability1)
+
+
+#cluster2
+
+cluster2<- c(18, 190)
+names(cluster2) <- c("ProPD","Control")
+cluster2
+probability2 <- c(0.5, 0.5)
+chisq.test(cluster2, p= probability2)
+
+
+
+#cluster3
+
+cluster3<- c(17, 90)
+names(cluster3) <- c("ProPD","Control")
+cluster3
+probability3 <- c(0.5, 0.5)
+chisq.test(cluster3, p= probability3)
+
+
+#cluster4
+
+cluster4<- c(22,35 )
+names(cluster4) <- c("ProPD","Control")
+cluster4
+probability4 <- c(0.5, 0.5)
+chisq.test(cluster4, p= probability4)
+
+```
+
+
+
+
+
+
